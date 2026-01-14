@@ -1,0 +1,198 @@
+# ========================================================
+# LAMMPS Input for Cu-Graphene Slab with 8.22 nm Gap
+# Full XY coverage with periodic boundaries
+# ========================================================
+
+units           real
+atom_style      full
+boundary        p p p
+neighbor        2.0 bin
+neigh_modify    delay 0 every 1 check yes
+
+# ========== Read Structure ==========
+read_data       Cu_slab_gap_model.lammps &
+                extra/bond/types 6 extra/atom/types 2 extra/angle/types 4 &
+                extra/dihedral/types 6 &
+                extra/improper/types 6 &
+                extra/special/per/atom 6 &
+                extra/bond/per/atom 8 &
+                extra/angle/per/atom 6 &
+                extra/dihedral/per/atom 6 &
+                extra/improper/per/atom 6
+
+# ========== Atom Types ==========
+# 1: Cu, 2: C(graphite), 3: C(CO2), 4: O(CO2)
+molecule        co2mol CO2.mol toff 2
+
+mass            1 63.546
+mass            2 12.011
+mass            3 12.011
+mass            4 15.999
+
+variable      gap_z_bot equal 11.435606115602488 
+variable      gap_z_top equal 91.63560611560249
+# ========== Force Field ==========
+
+pair_style      hybrid/overlay eam lj/class2/coul/long 12.0 lj/class2 10.0
+pair_modify     mix geometric
+kspace_style    pppm 1.0e-4 
+kspace_modify   gewald 1.0e-4
+pair_coeff      1 1 eam Cu_u3.eam
+pair_coeff      2 2 lj/class2 0.07 3.33
+# C(CO2)-C(CO2): 12-6: ε=0.0559 kcal/mol, σ=3.74 Å → 9-6: ε=0.0559, σ=3.667 Å
+pair_coeff      3 3 lj/class2/coul/long 0.0559 3.667  # kcal/mol, Å
+
+# O(CO2)-O(CO2): 12-6: ε=0.159 kcal/mol, σ=3.05 Å → 9-6: ε=0.159, σ=2.991 Å
+pair_coeff      4 4 lj/class2/coul/long 0.159 2.991   # kcal/mol, Å
+
+# ----- Cu-CO2 (literature values, already in kcal/mol) -----
+# Cu-C(CO2): ε=0.042 kcal/mol, σ=3.15 Å → 9-6: ε=0.042, σ=3.089 Å
+pair_coeff      1 3 lj/class2/coul/long 0.042 3.089  # kcal/mol, Å
+
+# Cu-O(CO2): ε=0.031 kcal/mol, σ=3.28 Å → 9-6: ε=0.031, σ=3.217 Å
+pair_coeff      1 4 lj/class2/coul/long 0.031 3.217  # kcal/mol, Å
+
+# ----- Cross terms -----
+# C(graphite)-C(CO2): ε=√(0.07×0.0559)=0.0626 kcal/mol, σ=(3.334+3.667)/2=3.5005 Å
+pair_coeff      2 3 lj/class2/coul/long 0.0626 3.501  # kcal/mol, Å
+
+# C(graphite)-O(CO2): ε=√(0.07×0.159)=0.1055 kcal/mol, σ=(3.334+2.991)/2=3.1625 Å
+pair_coeff      2 4 lj/class2/coul/long 0.1055 3.163  # kcal/mol, Å
+
+# C(CO2)-O(CO2): ε=√(0.0559×0.159)=0.094 kcal/mol, σ=(3.667+2.991)/2=3.329 Å
+pair_coeff      3 4 lj/class2/coul/long 0.094 3.329  # kcal/mol, Å
+
+# Cu-C(graphite): ε=0.02 kcal/mol, σ=3.35 Å → 9-6: ε=0.02, σ=3.286 Å
+pair_coeff      1 2 lj/class2 0.02 3.286  # kcal/mol, Å
+
+## LJ for Cu-CO2 (disable ReaxFF for these pairs)
+#pair_coeff      1 3 lj/cut 0.042 3.15  # Cu-C(CO2)
+#pair_coeff      1 4 lj/cut 0.031 3.28  # Cu-O(CO2)
+#
+## LJ for CO2-CO2 (TraPPE)
+#pair_coeff      3 3 lj/cut 0.0559 3.74
+#pair_coeff      4 4 lj/cut 0.159 3.05
+#pair_coeff      3 4 lj/cut 0.094 3.395
+
+# ========== Constraints ==========
+# Fix bottom Cu atoms
+region          cu_bottom_region block 0 80.0 0 80.0 0 ${gap_z_bot}
+group           cu_bottom region cu_bottom_region
+fix             fix_cu_bottom cu_bottom setforce 0.0 0.0 0.0
+#fix             z_top_wall all wall/lj126 zhi EDGE 10 30 2.5
+
+# ========== Minimization ==========
+timestep        0.1
+thermo          100
+thermo_modify   lost warn flush yes
+thermo_style    custom step cpu cpuremain temp press density vol atoms etotal pe ke 
+min_style       cg
+minimize        1.0e-6 1.0e-8 10000 10000
+reset_timestep  0
+
+
+# ========== Thermostat ==========
+variable        T equal 298.0
+variable        P equal 10.0
+variable        mu equal -416.71462715 + 0.001987*${T}*ln(${P})
+
+
+compute mdtemp all temp
+compute_modify mdtemp dynamic/dof yes
+fix             nvt all nvt temp ${T} ${T} 100.0
+fix_modify      nvt temp mdtemp
+dump            traj all custom 100 slab_nvt.lammpstrj id type x y z q
+dump_modify     traj sort id
+run 10000
+
+undump          traj
+
+unfix           fix_cu_bottom
+group           adsorbent type 1 2
+fix             fix_adsorbent adsorbent setforce 0.0 0.0 0.0
+unfix nvt
+uncompute mdtemp
+group           CO2 type 3 4
+compute mdtemp CO2 temp
+compute_modify mdtemp dynamic/dof yes
+
+fix             nvt CO2 nvt temp ${T} ${T} 100.0
+fix_modify      nvt temp mdtemp
+
+# ========== GCMC Setup ==========
+# Gap region (between Cu and graphene)
+variable        gcmc_top equal ${gap_z_bot}+6.0
+region          gap_region block 0 80.0 0 80.0 ${gap_z_bot} ${gap_z_top}
+region          gcmc_region block 0 80.0 0 80.0 ${gap_z_bot} ${gcmc_top}
+
+# GCMC parameters
+
+
+# Enhanced GCMC for gap region
+fix             gcmc_fix CO2 gcmc 100 100 100 0 12345 ${T} ${mu} 1.0 &
+                mol co2mol &
+                region gap_region &
+                overlap_cutoff 1.2 &
+                pressure ${P} &
+                maxangle 25 &
+                group CO2 &
+                full_energy
+
+variable        trans_attempts equal f_gcmc_fix[1]
+variable        trans_successes equal f_gcmc_fix[2]
+variable        ins_attempts equal f_gcmc_fix[3]
+variable        ins_successes equal f_gcmc_fix[4]
+variable        del_attempts equal f_gcmc_fix[5]
+variable        del_successes equal f_gcmc_fix[6]
+variable        rot_attempts equal f_gcmc_fix[7]
+variable        rot_successes equal f_gcmc_fix[8]
+
+
+# ========== Monitoring ==========
+variable        nCO2 equal "count(CO2)/3"
+# CO2 in gap
+
+group           CO2_gap dynamic CO2 region gap_region every 1
+variable        nCO2_gap equal "count(CO2_gap)/3"
+
+# CO2 near Cu surface (within 3.5 Å)
+variable        cu_surface_top equal ${gap_z_bot}+2.5
+region          cu_surface block 0 80.0 0 80.0 ${gap_z_bot} ${cu_surface_top}
+group           CO2_cu dynamic CO2 region cu_surface every 1
+variable        nCO2_cu equal "count(CO2_cu)/3"
+
+# Gap volume and density
+variable        gap_vol equal (${gap_z_top} - ${gap_z_bot}) * lx * ly
+variable        gap_dens equal v_nCO2_gap * 1660.54 / v_gap_vol  # mmol/cm³
+
+thermo          100
+compute_modify  thermo_temp dynamic/dof yes
+thermo_modify   lost warn flush yes
+thermo_style    custom step cpu cpuremain temp press vol v_nCO2_gap v_nCO2_cu v_nCO2 &
+                v_trans_attempts v_trans_successes &
+                v_ins_attempts v_ins_successes &
+                v_del_attempts v_del_successes &
+                v_rot_attempts v_rot_successes 
+
+fix             monitor all ave/time 500 10 5000 v_nCO2_gap v_nCO2_cu v_gap_dens file adsorption.dat
+
+
+# ========== Run ==========
+
+
+dump            traj all custom 100 slab_gcmc.lammpstrj id type x y z q
+dump_modify     traj sort id
+print "=== Equilibration (5 ps) ==="
+run             50000
+
+print "=== Production GCMC (20 ps) ==="
+run             200000
+
+print "========================================"
+print "FINAL RESULTS"
+print "========================================"
+print "CO2 in gap: ${nCO2_gap} molecules"
+print "CO2 near Cu surface: ${nCO2_cu} molecules"
+print "Gap density: ${gap_dens} mmol/cm³"
+print "Gap volume: ${gap_vol} Å³"
+print "========================================"

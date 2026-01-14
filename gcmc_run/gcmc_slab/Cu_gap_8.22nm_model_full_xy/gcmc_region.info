@@ -1,0 +1,10 @@
+GCMC_INSERTION_REGION
+region_type = block
+xlo = 0.0
+xhi = 101.22
+ylo = 0.0
+yhi = 101.22
+zlo = 15.75817570026865
+zhi = 95.95817570026865
+
+# Gap volume: 821688 Å³
