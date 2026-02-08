@@ -1,0 +1,12 @@
+Cu_cav@C Structure (Optimized Parallel Generation)
+==================================================
+Cu core diameter: 35.0 nm
+Gap (core to shell): 8.22 nm
+Shell thickness: 2.0 nm
+Total atoms: 3193709
+  Cu atoms: 1900688
+  C atoms: 1293021
+Carbon density: 0.0720 atoms/Å³
+Shell porosity: 0.27%
+Box size: 69.3 nm
+Parallel processing: 44 cores

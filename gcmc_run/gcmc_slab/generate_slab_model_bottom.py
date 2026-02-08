@@ -9,6 +9,7 @@ import numpy as np
 import math
 import os
 from ase import Atoms
+from ase.build import fcc111, add_vacuum
 from scipy.spatial import KDTree
 import warnings
 
@@ -47,55 +48,169 @@ class SlabParameters:
         self.output_dir = "Cu_gap_8.22nm_model_correct"
 
 
-# ========== CREATE CU SLAB AT BOTTOM ==========
-def create_cu_slab_at_bottom(params):
-    """Create Cu slab at z=0"""
+# ========== CREATE CU (111) SLAB AT BOTTOM ==========
+def create_cu_111_slab(params):
+    """Create Cu (111) slab with cubic orientation using ASE"""
 
-    print("Creating Cu slab at bottom...")
+    print("Creating Cu (111) slab with proper FCC structure...")
 
-    # Calculate Cu layer spacing for (111) surface
-    # For FCC (111), the layer spacing is a/√3
-    layer_spacing = params.Cu_lattice / np.sqrt(3)
+    # Create Cu (111) surface with proper FCC structure
+    # Size is determined by the number of unit cells needed to fill our box
+    # For Cu (111), the surface lattice vectors are:
+    # a1 = a/2 * [1, -1, 0]  (length = a/√2)
+    # a2 = a/2 * [1, 1, -2]   (length = a√(3/2))
 
-    # Number of atoms in x and y directions
-    # Use simple cubic for now - we'll adjust to fill the box
-    nx = int(np.ceil(params.box_x / params.Cu_lattice))
-    ny = int(np.ceil(params.box_y / params.Cu_lattice))
+    a = params.Cu_lattice
+
+    # Calculate the dimensions of the (111) surface unit cell
+    # Length of a1 vector
+    a1_length = a * math.sqrt(2) / 2  # a/√2
+    # Length of a2 vector
+    a2_length = a * math.sqrt(6) / 2  # a√(3/2)
+
+    # Number of unit cells needed in each direction
+    n_x = int(np.ceil(params.box_x / a1_length))
+    n_y = int(np.ceil(params.box_y / a2_length))
+
+    print(f"  Using {n_x}×{n_y} unit cells of Cu(111) surface")
+
+    # Create the Cu (111) slab using ASE's built-in function
+    # This creates a slab with proper FCC (111) orientation
+    try:
+        # Try using ASE's fcc111 function
+        from ase.build import fcc111
+
+        slab = fcc111(
+            "Cu", size=(n_x, n_y, params.Cu_layers), a=a, vacuum=0, periodic=True
+        )
+
+        # Get the cell and positions
+        cell = slab.get_cell()
+        positions = slab.get_positions()
+
+        print(f"  Original slab cell: {cell}")
+
+        # Reorient the slab so the (111) surface is parallel to xy-plane
+        # The fcc111 function already does this correctly
+
+        # Scale the slab to match our desired box dimensions
+        # Calculate current dimensions
+        current_x = cell[0, 0]
+        current_y = cell[1, 1]
+
+        print(f"  Current dimensions: {current_x:.2f} × {current_y:.2f} Å")
+        print(f"  Target dimensions: {params.box_x:.2f} × {params.box_y:.2f} Å")
+
+        # Scale positions to match target box
+        if current_x > 0 and current_y > 0:
+            scale_x = params.box_x / current_x
+            scale_y = params.box_y / current_y
+
+            positions[:, 0] = positions[:, 0] * scale_x
+            positions[:, 1] = positions[:, 1] * scale_y
+
+            # Update cell
+            new_cell = cell.copy()
+            new_cell[0, 0] = params.box_x
+            new_cell[1, 1] = params.box_y
+            slab.set_cell(new_cell)
+            slab.set_positions(positions)
+
+            # Center the slab at z=0
+            min_z = np.min(positions[:, 2])
+            positions[:, 2] -= min_z
+            slab.set_positions(positions)
+
+        print(f"  Created Cu(111) slab with {len(slab)} atoms")
+        return slab
+
+    except ImportError:
+        # Fallback: Create manual FCC (111) slab
+        print("  ASE fcc111 not available, creating manual FCC (111) slab...")
+        return create_manual_cu_111_slab(params)
+
+
+def create_manual_cu_111_slab(params):
+    """Manual creation of Cu (111) slab with FCC structure"""
+
+    a = params.Cu_lattice
+
+    # FCC lattice basis
+    fcc_basis = np.array(
+        [[0.0, 0.0, 0.0], [0.5, 0.5, 0.0], [0.5, 0.0, 0.5], [0.0, 0.5, 0.5]]
+    )
+
+    # For (111) surface, we need to rotate the lattice
+    # Transformation matrix for (111) surface
+    # These vectors are orthogonal for cubic simulation box
+
+    # Vector 1: [1, -1, 0] direction (in-plane)
+    v1 = np.array([1, -1, 0]) * a / math.sqrt(2)
+    # Vector 2: [1, 1, -2] direction (in-plane, orthogonal to v1)
+    v2 = np.array([1, 1, -2]) * a / math.sqrt(6)
+    # Vector 3: [1, 1, 1] direction (out-of-plane, stack direction)
+    v3 = np.array([1, 1, 1]) * a / math.sqrt(3)
+
+    # Number of unit cells
+    n1 = int(np.ceil(params.box_x / np.linalg.norm(v1)))
+    n2 = int(np.ceil(params.box_y / np.linalg.norm(v2)))
+
+    print(f"  Using {n1}×{n2} unit cells in plane")
 
     positions = []
 
-    for layer in range(params.Cu_layers):
-        z = layer * layer_spacing
+    # Generate positions
+    for i in range(n1):
+        for j in range(n2):
+            for k in range(params.Cu_layers):
+                # Unit cell origin
+                origin = i * v1 + j * v2 + k * v3
 
-        # Create a grid of Cu atoms
-        for i in range(nx):
-            for j in range(ny):
-                x = i * params.Cu_lattice
-                y = j * params.Cu_lattice
+                # Add FCC basis atoms
+                for basis in fcc_basis:
+                    # Transform basis to (111) coordinates
+                    # For simplicity, we'll use direct coordinates
+                    pos = origin + basis[0] * v1 + basis[1] * v2 + basis[2] * v3
 
-                # Simple cubic positions
-                positions.append([x, y, z])
-
-                # Add FCC atoms (for (111) surface we'd need proper arrangement)
-                # For simplicity, keep it as simple cubic for now
-                # In reality, Cu (111) would have hexagonal pattern
+                    # Check if within box
+                    if 0 <= pos[0] < params.box_x and 0 <= pos[1] < params.box_y:
+                        positions.append(pos)
 
     positions = np.array(positions)
 
-    # Filter to stay within box
-    mask = (positions[:, 0] < params.box_x) & (positions[:, 1] < params.box_y)
-    positions = positions[mask]
+    # Remove duplicates
+    if len(positions) > 0:
+        # Use KDTree for fast duplicate removal
+        tree = KDTree(positions[:, :2])  # Only check x,y for same layer
+        mask = np.ones(len(positions), dtype=bool)
 
-    # Ensure positions are within [0, box_x) and [0, box_y)
-    positions[:, 0] = np.mod(positions[:, 0], params.box_x)
-    positions[:, 1] = np.mod(positions[:, 1], params.box_y)
+        for i in range(len(positions)):
+            if mask[i]:
+                # Find neighbors in xy-plane
+                neighbors = tree.query_ball_point(positions[i, :2], 0.5)
+                for j in neighbors:
+                    if (
+                        j > i
+                        and mask[j]
+                        and abs(positions[j, 2] - positions[i, 2]) < 0.5
+                    ):
+                        # Check if they're the same atom
+                        dist_xy = np.linalg.norm(positions[j, :2] - positions[i, :2])
+                        if dist_xy < 0.5:
+                            mask[j] = False
 
-    # Create atoms
+        positions = positions[mask]
+
+    # Create atoms object
     atoms = Atoms("Cu" * len(positions), positions=positions)
 
-    print(f"  Cu atoms: {len(atoms):,}")
+    # Set cell
+    atoms.set_cell([params.box_x, params.box_y, np.max(positions[:, 2]) + 5.0])
+    atoms.set_pbc([True, True, False])
+
+    print(f"  Created manual Cu(111) slab with {len(atoms)} atoms")
     print(
-        f"  Cu z-range: {np.min(positions[:, 2]):.1f} to {np.max(positions[:, 2]):.1f} Å"
+        f"  Z-range: {np.min(positions[:, 2]):.1f} to {np.max(positions[:, 2]):.1f} Å"
     )
 
     return atoms
@@ -253,13 +368,28 @@ def create_complete_model(params):
     """Create complete model: Cu at bottom, graphene above, vacuum on top"""
 
     print(f"\n{'=' * 60}")
-    print("CREATING MODEL: Cu AT BOTTOM, GRAPHENE ABOVE, VACUUM ON TOP")
+    print("CREATING MODEL: Cu (111) AT BOTTOM, GRAPHENE ABOVE, VACUUM ON TOP")
     print(f"{'=' * 60}")
 
-    # 1. Create Cu slab at z=0
-    cu_atoms = create_cu_slab_at_bottom(params)
+    # 1. Create Cu (111) slab at z=0
+    cu_atoms = create_cu_111_slab(params)
     cu_positions = cu_atoms.get_positions()
     cu_z_max = np.max(cu_positions[:, 2])
+
+    print(f"\nCu (111) slab created:")
+    print(f"  Atoms: {len(cu_atoms):,}")
+    print(f"  Z-range: {np.min(cu_positions[:, 2]):.1f} to {cu_z_max:.1f} Å")
+
+    # Calculate layer spacing for verification
+    if len(cu_positions) > 0:
+        # Sort by z and find distinct layers
+        unique_z = np.unique(np.round(cu_positions[:, 2], 2))
+        if len(unique_z) > 1:
+            layer_spacing = np.mean(np.diff(np.sort(unique_z)))
+            print(f"  Average layer spacing: {layer_spacing:.3f} Å")
+            print(
+                f"  Theoretical (111) layer spacing: {params.Cu_lattice / math.sqrt(3):.3f} Å"
+            )
 
     # 2. Create graphene above Cu
     graphene_positions, cu_z_max_calc, graphene_z_base = create_graphene_above_cu(
@@ -338,8 +468,10 @@ def write_lammps_files(atoms, gap_bottom, gap_top, box_z, params):
 
     with open(filename, "w") as f:
         # Header
-        f.write("LAMMPS data file: Cu slab + porous graphene\n")
-        f.write("# Cu at bottom, graphene above with 8.22 nm gap, vacuum on top\n")
+        f.write("LAMMPS data file: Cu (111) slab + porous graphene\n")
+        f.write(
+            "# Cu (111) at bottom, graphene above with 8.22 nm gap, vacuum on top\n"
+        )
         f.write(f"# Box: {params.box_x:.1f} × {params.box_y:.1f} × {box_z:.1f} Å\n")
         f.write(
             f"# Gap: {gap_top - gap_bottom:.1f} Å ({gap_bottom:.1f} to {gap_top:.1f} Å)\n\n"
@@ -393,8 +525,8 @@ def write_input_script(gap_bottom, gap_top, box_z, params):
     # Since we have periodic boundaries in x and y, we use INF for those
 
     script = f"""# ========================================================
-# LAMMPS Input for Cu-Graphene Slab with 8.22 nm Gap
-# Cu at bottom, graphene above, vacuum on top
+# LAMMPS Input for Cu (111)-Graphene Slab with 8.22 nm Gap
+# Cu (111) at bottom, graphene above, vacuum on top
 # Correct gap region definition for GCMC
 # ========================================================
 
@@ -580,12 +712,21 @@ def verify_model(atoms, gap_bottom, gap_top, params):
     cu_positions = positions[cu_mask]
 
     if len(cu_positions) > 0:
-        print(f"Cu slab:")
+        print(f"Cu (111) slab:")
         print(f"  Atoms: {len(cu_positions):,}")
         print(
             f"  Z-range: {np.min(cu_positions[:, 2]):.1f} to {np.max(cu_positions[:, 2]):.1f} Å"
         )
         print(f"  Bottom at z = {np.min(cu_positions[:, 2]):.1f} Å (should be ~0)")
+
+        # Check if it's actually (111) by examining layer spacing
+        unique_z = np.unique(np.round(cu_positions[:, 2], 2))
+        if len(unique_z) > 1:
+            layer_spacing = np.mean(np.diff(np.sort(unique_z)))
+            theoretical = params.Cu_lattice / math.sqrt(3)
+            print(f"  Average layer spacing: {layer_spacing:.3f} Å")
+            print(f"  Theoretical (111) spacing: {theoretical:.3f} Å")
+            print(f"  Difference: {abs(layer_spacing - theoretical):.3f} Å")
 
     # Check C atoms
     c_mask = np.array(symbols) == "C"
@@ -645,7 +786,7 @@ def verify_model(atoms, gap_bottom, gap_top, params):
 # ========== MAIN ==========
 if __name__ == "__main__":
     print("=" * 60)
-    print("CORRECTED SLAB MODEL - Cu BOTTOM, GRAPHENE ABOVE")
+    print("CORRECTED SLAB MODEL - Cu (111) BOTTOM, GRAPHENE ABOVE")
     print("=" * 60)
 
     # Initialize parameters
@@ -654,7 +795,7 @@ if __name__ == "__main__":
     print(f"\nModel specifications:")
     print(f"  Box XY: {params.box_x:.1f} × {params.box_y:.1f} Å")
     print(f"  Gap: {params.gap_size} Å (8.22 nm)")
-    print(f"  Cu layers: {params.Cu_layers}")
+    print(f"  Cu layers: {params.Cu_layers} (FCC (111) orientation)")
     print(f"  Carbon layers: {params.carbon_layers}")
     print(f"  Pore diameter: {params.pore_diameter} Å")
     print(f"  Porosity: {params.porosity:.1%}")
@@ -674,13 +815,13 @@ if __name__ == "__main__":
     print("=" * 60)
     print(f"Output directory: {params.output_dir}")
     print(f"\nFiles created:")
-    print(f"  1. Cu_slab_gap_model.lammps - Structure")
+    print(f"  1. Cu_slab_gap_model.lammps - Structure with Cu (111)")
     print(f"  2. run_gcmc_simulation.lammps - LAMMPS input with CORRECT gap definition")
     print(f"  3. gap_info.txt - Gap region information")
     print(f"  4. model.xyz - Visualization file")
 
     print(f"\nKey features:")
-    print(f"  • Cu slab at bottom (z ≈ 0)")
+    print(f"  • Cu (111) slab at bottom (z ≈ 0)")
     print(f"  • Graphene above with {params.gap_size} Å gap")
     print(f"  • Vacuum only on top of graphene")
     print(f"  • Correct GCMC region: z = {gap_bottom:.1f} to {gap_top:.1f} Å")
@@ -689,3 +830,4 @@ if __name__ == "__main__":
     print(f"  cd {params.output_dir}")
     print(f"  mpirun -np 4 lammps -in run_gcmc_simulation.lammps")
     print("=" * 60)
+

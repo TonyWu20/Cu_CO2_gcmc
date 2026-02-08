@@ -1,0 +1,250 @@
+import numpy as np
+from ase import Atoms
+from ase.build import bulk, molecule
+from ase.cluster import Icosahedron  # Correct module for nanoparticles
+from ase.io import write
+import random
+
+
+def create_cu_core(size_nm=35.0):
+    """
+    Creates a large Cu nanoparticle using ASE's cluster module.
+    Note: 35 nm is extremely large (millions of atoms). N=200 is an example.
+    This is computationally prohibitive for MD/GCMC. Use a smaller N for practical models.
+    """
+    # For a 35 nm particle, N needs to be very high (e.g., N=200 or more)
+    N_layers = 200  # WARNING: This creates a huge system!
+    print(
+        f"Creating Cu icosahedron with N={N_layers} layers (WARNING: Very large system)."
+    )
+    cu_core = Icosahedron("Cu", noshells=N_layers, latticeconstant=3.615)
+    print(f"Cu core created with {len(cu_core)} atoms.")
+    cu_core.center()
+    return cu_core
+
+
+def create_solid_carbon_shell(inner_radius_nm, outer_radius_nm, density_nm3=120.0):
+    """Creates a solid spherical carbon shell."""
+    inner_r = inner_radius_nm * 10.0
+    outer_r = outer_radius_nm * 10.0
+    density_ang3 = density_nm3 / (10.0**3)
+
+    volume_shell = (4 / 3) * np.pi * (outer_r**3 - inner_r**3)
+    total_atoms = int(volume_shell * density_ang3)
+
+    print(
+        f"Creating solid C shell: Inner R={inner_r}A, Outer R={outer_r}A, Density={density_nm3}/nm^3"
+    )
+    print(f"Estimated atoms in solid shell: {total_atoms}")
+
+    positions = []
+    symbols = []
+    count = 0
+    max_attempts = total_atoms * 10
+
+    while count < total_atoms and max_attempts > 0:
+        r_vec = np.random.uniform(-outer_r, outer_r, size=3)
+        dist = np.linalg.norm(r_vec)
+        if inner_r <= dist <= outer_r:
+            positions.append(r_vec)
+            symbols.append("C")
+            count += 1
+        max_attempts -= 1
+
+    if count < total_atoms:
+        print(f"Warning: Could only place {count} atoms, target was {total_atoms}.")
+
+    carbon_shell_solid = Atoms(symbols, positions=positions)
+    print(f"Solid carbon shell created with {len(carbon_shell_solid)} atoms.")
+    return carbon_shell_solid
+
+
+def introduce_pores(
+    carbon_shell, num_pores, pore_radius_nm, shell_inner_nm, shell_outer_nm
+):
+    """Removes atoms to create spherical pores."""
+    print(
+        f"Introducing {num_pores} spherical pores (R={pore_radius_nm} nm) into the carbon shell..."
+    )
+    positions = carbon_shell.get_positions()
+    symbols = carbon_shell.get_chemical_symbols()
+
+    placed_pores = 0
+    max_attempts = num_pores * 10
+
+    for _ in range(num_pores):
+        pore_placed = False
+        attempts = 0
+        while not pore_placed and attempts < max_attempts:
+            min_dist_from_surf = pore_radius_nm
+            r_center_mag = np.random.uniform(
+                (shell_inner_nm + min_dist_from_surf) * 10,
+                (shell_outer_nm - min_dist_from_surf) * 10,
+            )
+            direction = np.random.normal(size=3)
+            direction = direction / np.linalg.norm(direction)
+            r_center = r_center_mag * direction
+
+            dists = np.linalg.norm(positions - r_center, axis=1)
+            atoms_to_remove = dists <= (pore_radius_nm * 10)
+
+            if np.any(atoms_to_remove):
+                keep_indices = ~atoms_to_remove
+                positions = positions[keep_indices]
+                symbols = [s for i, s in enumerate(symbols) if keep_indices[i]]
+                pore_placed = True
+                placed_pores += 1
+        attempts += 1
+
+    if placed_pores < num_pores:
+        print(
+            f"Warning: Only placed {placed_pores} out of {num_pores} requested pores."
+        )
+
+    carbon_shell_porous = Atoms(symbols, positions=positions)
+    print(f"Carbon shell after pore introduction has {len(carbon_shell_porous)} atoms.")
+    return carbon_shell_porous
+
+
+def combine_core_shell(cu_core, carbon_shell):
+    """Combines the Cu core and the carbon shell."""
+    combined = cu_core.copy()
+    combined.extend(carbon_shell)
+    combined.center()
+    print(f"Combined Cu@C structure created with {len(combined)} total atoms.")
+    return combined
+
+
+def write_lammps_data(atoms, filename="Cu_cav@C_model_corrected_v2.data"):
+    """
+    Writes the Atoms object to a LAMMPS data file with atom_style full.
+    Corrected for OVITO compatibility: Declares 0 bond/angle types if no initial bonds/angles are defined.
+    """
+    # Define atom types and masses
+    atom_types = {"Cu": 1, "C": 2}
+    masses = {"Cu": 63.546, "C": 12.011}
+
+    # Assign atom types
+    types = []
+    for atom in atoms:
+        types.append(atom_types[atom.symbol])
+
+    n_atoms = len(atoms)
+    n_atom_types = len(set(atom_types.values()))
+
+    # *** CORRECTED PART: Set bond/angle types to 0 if no initial connectivity is defined ***
+    # This is often suitable for reactive force fields like ReaxFF where bonding is dynamic.
+    # If you *must* have types>0 for ReaxFF parameters later, you need valid Bonds/Angles entries.
+    # For now, assuming no initial bonds/angles are specified.
+    n_bond_types = 0
+    n_angle_types = 0
+
+    # Determine box bounds with padding
+    positions = atoms.get_positions()
+    padding = 5.0
+    x_min, y_min, z_min = positions.min(axis=0) - padding
+    x_max, y_max, z_max = positions.max(axis=0) + padding
+
+    with open(filename, "w") as f:
+        f.write(
+            f"# LAMMPS data file for Cu@C core/shell with pores (~1-1.5nm) - OVITO Compatible\n\n"
+        )
+        f.write(f"{n_atoms} atoms\n")
+        f.write(f"{n_atom_types} atom types\n")
+        f.write(f"{n_bond_types} bond types\n")  # Now 0
+        f.write(f"{n_angle_types} angle types\n")  # Now 0
+        f.write(f"\n")
+
+        f.write(f"{x_min:.6f} {x_max:.6f} xlo xhi\n")
+        f.write(f"{y_min:.6f} {y_max:.6f} ylo yhi\n")
+        f.write(f"{z_min:.6f} {z_max:.6f} zlo zhi\n")
+        f.write(f"\n")
+
+        f.write(f"Masses\n\n")
+        for symbol, atom_type in sorted(atom_types.items(), key=lambda item: item[1]):
+            f.write(f"{atom_type} {masses[symbol]}\n")
+        f.write(f"\n")
+
+        f.write(f"Atoms # full\n\n")
+        for i, (atom, atom_type) in enumerate(zip(atoms, types), start=1):
+            x, y, z = atom.position
+            f.write(f"{i} 1 {atom_type} 0.0 {x:.6f} {y:.6f} {z:.6f}\n")
+        f.write(f"\n")
+
+        # *** CORRECTED PART: Skip Bond/Angle Coeffs and Bonds/Angles sections if types are 0 ***
+        if n_bond_types > 0:
+            f.write(f"Bond Coeffs\n")
+            # Define coeffs here if needed, e.g., f.write(f'1 k r0\n')
+            f.write(f"\n")
+            f.write(
+                f"Bonds\n\n"
+            )  # Must exist if types > 0, can be empty or have entries
+            # Add bond entries here if needed, e.g., f.write(f'1 1 10 15\n')
+            f.write(f"\n")
+
+        if n_angle_types > 0:
+            f.write(f"Angle Coeffs\n")
+            # Define coeffs here if needed, e.g., f.write(f'1 k theta0\n')
+            f.write(f"\n")
+            f.write(
+                f"Angles\n\n"
+            )  # Must exist if types > 0, can be empty or have entries
+            # Add angle entries here if needed, e.g., f.write(f'1 1 10 15 20\n')
+            f.write(f"\n")
+
+    print(f"LAMMPS data file written to {filename}")
+
+
+# --- Main Execution ---
+if __name__ == "__main__":
+    random.seed(42)
+
+    # 1. Create the Cu core (35 nm - WARNING: Huge!)
+    cu_core = create_cu_core(size_nm=35.0)
+
+    # 2. Define shell dimensions based on paper (Cu radius 17.5nm, distance 8.22nm, thickness 2nm)
+    cu_radius_nm = 17.5  # 35 nm diameter / 2
+    distance_core_shell_nm = 8.22
+    c_shell_thickness_nm = 2.0
+
+    shell_inner_radius_nm = (
+        cu_radius_nm + distance_core_shell_nm
+    )  # 17.5 + 8.22 = 25.72 nm
+    shell_outer_radius_nm = (
+        shell_inner_radius_nm + c_shell_thickness_nm
+    )  # 25.72 + 2.0 = 27.72 nm
+
+    print(f"Cu Core Radius: {cu_radius_nm} nm")
+    print(f"C Shell Inner Radius: {shell_inner_radius_nm} nm")
+    print(f"C Shell Outer Radius: {shell_outer_radius_nm} nm")
+
+    # 3. Create the solid carbon shell
+    carbon_shell_solid = create_solid_carbon_shell(
+        inner_radius_nm=shell_inner_radius_nm,
+        outer_radius_nm=shell_outer_radius_nm,
+        density_nm3=120.0,
+    )
+
+    # 4. Introduce pores (e.g., 10000 pores of 0.75 nm radius)
+    target_pore_radius_nm = 0.75
+    num_pores_to_introduce = 10000
+    carbon_shell_porous = introduce_pores(
+        carbon_shell_solid,
+        num_pores=num_pores_to_introduce,
+        pore_radius_nm=target_pore_radius_nm,
+        shell_inner_nm=shell_inner_radius_nm,
+        shell_outer_nm=shell_outer_radius_nm,
+    )
+
+    # 5. Combine core and porous shell
+    combined_structure = combine_core_shell(cu_core, carbon_shell_porous)
+
+    # 6. Write the corrected LAMMPS data file (declares 0 bond/angle types)
+    write_lammps_data(combined_structure, filename="Cu_cav@C_model_corrected_v2.data")
+
+    # Optional: Write XYZ for visualization (Comment out for huge systems)
+    # write('Cu_cav@C_model_corrected_v2.xyz', combined_structure)
+    print(
+        "LAMMPS data file 'Cu_cav@C_model_corrected_v2.data' created (OVITO compatible format)."
+    )
+    print("WARNING: The system size is extremely large due to the 35 nm Cu core.")

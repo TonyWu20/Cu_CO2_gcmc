@@ -10,7 +10,7 @@ boundary        p p p
 neighbor        2.0 bin
 neigh_modify    delay 0 every 1 check yes 
 
-variable        Cu_radius equal 12.5     # Angstrom (2.5 nm)
+variable        Cu_radius equal 175     # Angstrom (2.5 nm)
 # ========== Read Structure ==========
 read_data       Cu_Cav_at_C_checked_${Cu_radius}.lammps  &
                 extra/bond/types 4 extra/atom/types 2 extra/angle/types 12 &
@@ -178,11 +178,11 @@ thermo_modify   lost warn flush yes
 
 # Trajectory output
 variable dist_to_center atom sqrt((x-${center})^2+(y-${center})^2+(z-${center})^2)
-dump            traj all custom 500 trajectory_Cu_${Cu_radius}_new.lammpstrj id type x y z q v_dist_to_center
+dump            traj all custom 500 trajectory_Cu_${Cu_radius}_lj.lammpstrj id type x y z q v_dist_to_center
 dump_modify     traj sort id
 
 # Restart files
-restart         1000 restart_new.*.lammps
+restart         1000 restart_${Cu_radius}.*.lammps
 
 # ========== Equilibration Phase ==========
 print "=== Equilibration phase (5 ps) ==="
@@ -198,6 +198,7 @@ run             200000      # GCMC attempts
 print "=== Simulation Complete ==="
 
 # Calculate adsorption statistics
+variable        volume_A equal "vol"
 variable        volume_nm3 equal "vol/1000.0"
 variable        adsorption_density equal "${nCO2}/${volume_nm3}"
 variable        adsorption_mmol_g equal "${adsorption_density}*1.66054"
@@ -212,7 +213,7 @@ variable        rot_rate equal ${rot_successes}/${rot_attempts}
 print "========================================"
 print "FINAL RESULTS - CO2 Adsorption at ${P} bar, ${T} K"
 print "========================================"
-print "System volume: ${vol} Å³ (${volume_nm3} nm³)"
+print "System volume: ${volume_A} Å³ (${volume_nm3} nm³)"
 print "Total CO2 molecules: ${nCO2}"
 print "Translation Moves:"
 print "  Attempts: ${trans_attempts}"

@@ -1,0 +1,40 @@
+LAMMPS (22 Jul 2025)
+KOKKOS mode with Kokkos version 4.6.2 is enabled
+  will use up to 1 GPU(s) per node
+WARNING: When using a single thread, the Kokkos Serial backend (i.e. Makefile.kokkos_mpi_only) gives better performance than the OpenMP backend (src/KOKKOS/kokkos.cpp:221)
+  using 1 OpenMP thread(s) per MPI task
+Reading data file ...
+  orthogonal box = (0 0 0) to (60 60 60)
+  1 by 1 by 1 MPI processor grid
+  reading atoms ...
+  7958 atoms
+  scanning bonds ...
+  2 = max bonds/atom
+  orthogonal box = (0 0 0) to (60 60 60)
+  1 by 1 by 1 MPI processor grid
+  reading bonds ...
+  1755 bonds
+Finding 1-2 1-3 1-4 neighbors ...
+  special bond factors lj:    0        0        0       
+  special bond factors coul:  0        0        0       
+     2 = max # of 1-2 neighbors
+     1 = max # of 1-3 neighbors
+     1 = max # of 1-4 neighbors
+     2 = max # of special neighbors
+  special bonds CPU = 0.004 seconds
+  read_data CPU = 0.058 seconds
+WARNING: Fix property/atom mol, charge, rmass, temperature, or heatflow w/out ghost communication (src/fix_property_atom.cpp:206)
+Starting energy minimization...
+
+CITE-CITE-CITE-CITE-CITE-CITE-CITE-CITE-CITE-CITE-CITE-CITE-CITE
+
+Your simulation uses code contributions which should be cited:
+- pair reaxff command: doi:10.1016/j.parco.2011.08.005
+The log file lists these citations in BibTeX format.
+
+CITE-CITE-CITE-CITE-CITE-CITE-CITE-CITE-CITE-CITE-CITE-CITE-CITE
+
+Switching to 'neigh_modify every 1 delay 0 check yes' setting during minimization
+PPPM Kokkos initialization ...
+ERROR: KSpace style is incompatible with Pair style (src/kspace.cpp:204)
+Last input line: minimize 1.0e-4 1.0e-6 1000 10000

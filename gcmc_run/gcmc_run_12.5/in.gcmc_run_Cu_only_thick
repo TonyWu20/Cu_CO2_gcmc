@@ -12,15 +12,14 @@ neigh_modify    delay 0 every 1 check yes
 
 variable        Cu_radius equal 12.5     # Angstrom (2.5 nm)
 # ========== Read Structure ==========
-read_data       Cu_Cav_at_C_checked_${Cu_radius}.lammps  &
-                extra/bond/types 4 extra/atom/types 2 extra/angle/types 12 &
-                extra/dihedral/types 4 &
-                extra/improper/types 4 &
-                extra/special/per/atom 4 &
-                extra/bond/per/atom 12 &
-                extra/angle/per/atom 4 &
-                extra/dihedral/per/atom 4 &
-                extra/improper/per/atom 4 &
+read_data       Cu_Core_only_${Cu_radius}_thick.lammps extra/bond/types 1 extra/atom/types 2 extra/angle/types 1 &
+                extra/dihedral/types 3 &
+                extra/improper/types 3 &
+                extra/special/per/atom 3 &
+                extra/bond/per/atom 3 &
+                extra/angle/per/atom 3 &
+                extra/dihedral/per/atom 3 &
+                extra/improper/per/atom 3 &
 
 # ========== Atom Type Definitions ==========
 # Type 1: Cu (from core)
@@ -29,47 +28,20 @@ read_data       Cu_Cav_at_C_checked_${Cu_radius}.lammps  &
 # Type 4: O  (from CO2 molecule)
 
 # Define CO2 molecule template
-molecule        co2mol CO2.mol  toff 2 # Create this file with CO2 coordinates
+molecule        co2mol CO2.mol  toff 1 # Create this file with CO2 coordinates
 # Set masses (g/mol)
 mass            1 63.546     # Cu
 mass            2 12.011     # C (shell)
-mass            3 12.011     # C (shell)
-mass            4 15.999     # O (CO2)
+mass            3 15.999     # O (CO2)
 
-# ========== Force Field ==========
 
-pair_style      hybrid/overlay eam lj/class2/coul/long 12.0 lj/class2 10.0
-pair_modify     mix geometric
-kspace_style    pppm 1.0e-4 
-kspace_modify   gewald 1.0e-4
-pair_coeff      1 1 eam Cu_u3.eam
-pair_coeff      2 2 lj/class2 0.07 3.33
-# C(CO2)-C(CO2): 12-6: ε=0.0559 kcal/mol, σ=3.74 Å → 9-6: ε=0.0559, σ=3.667 Å
-pair_coeff      3 3 lj/class2/coul/long 0.0559 3.667  # kcal/mol, Å
+# ========== ReaxFF Force Field Setup ==========
+# Load your ReaxFF force field file
+pair_style      reaxff NULL
+pair_coeff      * * jp046244d_si_002.reaxff Cu C O  # Check your ffield file for element order
 
-# O(CO2)-O(CO2): 12-6: ε=0.159 kcal/mol, σ=3.05 Å → 9-6: ε=0.159, σ=2.991 Å
-pair_coeff      4 4 lj/class2/coul/long 0.159 2.991   # kcal/mol, Å
-
-# ----- Cu-CO2 (literature values, already in kcal/mol) -----
-# Cu-C(CO2): ε=0.042 kcal/mol, σ=3.15 Å → 9-6: ε=0.042, σ=3.089 Å
-pair_coeff      1 3 lj/class2/coul/long 0.042 3.089  # kcal/mol, Å
-
-# Cu-O(CO2): ε=0.031 kcal/mol, σ=3.28 Å → 9-6: ε=0.031, σ=3.217 Å
-pair_coeff      1 4 lj/class2/coul/long 0.031 3.217  # kcal/mol, Å
-
-# ----- Cross terms -----
-# C(graphite)-C(CO2): ε=√(0.07×0.0559)=0.0626 kcal/mol, σ=(3.334+3.667)/2=3.5005 Å
-pair_coeff      2 3 lj/class2/coul/long 0.0626 3.501  # kcal/mol, Å
-
-# C(graphite)-O(CO2): ε=√(0.07×0.159)=0.1055 kcal/mol, σ=(3.334+2.991)/2=3.1625 Å
-pair_coeff      2 4 lj/class2/coul/long 0.1055 3.163  # kcal/mol, Å
-
-# C(CO2)-O(CO2): ε=√(0.0559×0.159)=0.094 kcal/mol, σ=(3.667+2.991)/2=3.329 Å
-pair_coeff      3 4 lj/class2/coul/long 0.094 3.329  # kcal/mol, Å
-
-# Cu-C(graphite): ε=0.02 kcal/mol, σ=3.35 Å → 9-6: ε=0.02, σ=3.286 Å
-pair_coeff      1 2 lj/class2 0.02 3.286  # kcal/mol, Å
-
+# Charge equilibration (QEq) for ReaxFF
+fix             qeq all qeq/reaxff 1 0.0 10.0 1.0e-6 reaxff maxiter 80000
 
 # ========== Define Regions ==========
 # Region for GCMC insertion (gap between Cu core and carbon shell)
@@ -90,6 +62,7 @@ region          gcmc_region intersect 2 out_of_cu cell
 # Region to constrain Cu core (optional, to prevent drift)
 region          cu_core sphere ${center} ${center} ${center} ${Cu_radius} side in
 group           cu_core_group region cu_core
+#fix             constrain_cu cu_core_group setforce 0.0 0.0 0.0
 
 thermo          100
 thermo_style    custom step cpu cpuremain temp press density vol atoms etotal pe ke 
@@ -99,7 +72,7 @@ timestep        0.1 # 0.1 fs
 # ========== Initial Energy Minimization ==========
 print "=== Initial energy minimization ==="
 min_style       cg
-minimize        1.0e-4 1.0e-6 10000 10000
+minimize        1.0e-4 1.0e-6 1000 10000
 reset_timestep  0
 
 # ========== GCMC Setup for CO2 Adsorption ==========
@@ -109,7 +82,7 @@ reset_timestep  0
 variable        T equal 298.0     # K
 variable        P equal 10.0          # bar
 variable        kT equal 0.001987*${T} # kcal/mol
-variable        mu0 equal -416.71462715         # μ at 1 bar, 298 K
+variable        mu0 equal -416.71462715         # μ at 1 bar, 298 K, kcal/mol
 variable        mu  equal ${mu0}+${kT}*ln(${P})           # Chemical potential (kcal/mol) for CO2 at 298K, 1 bar
 
 print "GCMC parameters:"
@@ -119,36 +92,30 @@ print "Chemical potential: ${mu} kcal/mol"
 
 # Temperature control for all atoms except constrained Cu
 group           mobile_group subtract all cu_core_group
-group           CO2  type 3 4
-
-fix             rigid_CO2 CO2 rigid/small molecule  mol co2mol 
-fix_modify      rigid_CO2 dynamic/dof yes
-
+group           CO2  type 2 3
 group           CO2_in_shell dynamic CO2 region gap_region every 1
-variable        Cu_near_radius equal ${Cu_radius} + 3
+variable        Cu_near_radius equal ${Cu_radius} + 3.5
 region          near_cu sphere ${center} ${center} ${center} ${Cu_near_radius} side in
 group           CO2_near_Cu  dynamic CO2 region near_cu every 1
 variable        nCO2 equal "count(CO2)/3"
 variable        nCO2_in_shell equal "count(CO2_in_shell)/3"
 variable        nCO2_near_surface equal "count(CO2_near_Cu)/3"
 
-group           c_shell_group type 2
-fix             constrain_cu cu_core_group setforce 0.0 0.0 0.0
-fix             constrain_c_shell c_shell_group setforce 0.0 0.0 0.0
+
 # Fix for GCMC insertion/deletion of CO2 molecules
-fix             gcmc_fix CO2 gcmc 100 100 0 0 12345 ${T} ${mu} 1.5 &
+fix             gcmc_fix CO2 gcmc 100 100 100 0 12345 ${T} ${mu} 1.5 &
                 mol co2mol &
-                rigid rigid_CO2 &
                 pressure ${P} &
+                maxangle 45 &
                 group CO2 &
-                full_energy 
+                full_energy &
+                mcmoves 20 40 40
 
 # ========== Thermostat and Dynamics ==========
 compute mdtemp all temp
 compute_modify mdtemp dynamic/dof yes
 fix             nvt all nvt temp ${T} ${T} 100.0
 fix_modify      nvt temp mdtemp
-
 
 variable        trans_attempts equal f_gcmc_fix[1]
 variable        trans_successes equal f_gcmc_fix[2]
@@ -158,10 +125,14 @@ variable        del_attempts equal f_gcmc_fix[5]
 variable        del_successes equal f_gcmc_fix[6]
 variable        rot_attempts equal f_gcmc_fix[7]
 variable        rot_successes equal f_gcmc_fix[8]
-
+# Calculate acceptance rates
+variable        trans_rate equal ${trans_successes}/${trans_attempts}
+variable        ins_rate equal ${ins_successes}/${ins_attempts}
+variable        del_rate equal ${del_successes}/${del_attempts}
+variable        rot_rate equal ${rot_successes}/${rot_attempts}
 # ========== Output Settings ==========
 # Thermodynamic output
-thermo          10
+thermo  100
 compute_modify  thermo_temp dynamic/dof yes
 thermo_style    custom step cpu cpuremain temp etotal pe ke  &
                 v_nCO2  v_nCO2_in_shell v_nCO2_near_surface &
@@ -178,11 +149,11 @@ thermo_modify   lost warn flush yes
 
 # Trajectory output
 variable dist_to_center atom sqrt((x-${center})^2+(y-${center})^2+(z-${center})^2)
-dump            traj all custom 500 trajectory_Cu_${Cu_radius}_new.lammpstrj id type x y z q v_dist_to_center
+dump            traj all custom 500 trajectory_Cu_${Cu_radius}_thick.lammpstrj id type x y z q v_dist_to_center
 dump_modify     traj sort id
 
 # Restart files
-restart         1000 restart_new.*.lammps
+restart         1000 restart_Cu_only_thick.*.lammps
 
 # ========== Equilibration Phase ==========
 print "=== Equilibration phase (5 ps) ==="
@@ -203,11 +174,6 @@ variable        adsorption_density equal "${nCO2}/${volume_nm3}"
 variable        adsorption_mmol_g equal "${adsorption_density}*1.66054"
 
 # Acceptance rates
-# Calculate acceptance rates
-variable        trans_rate equal ${trans_successes}/${trans_attempts}
-variable        ins_rate equal ${ins_successes}/${ins_attempts}
-variable        del_rate equal ${del_successes}/${del_attempts}
-variable        rot_rate equal ${rot_successes}/${rot_attempts}
 
 print "========================================"
 print "FINAL RESULTS - CO2 Adsorption at ${P} bar, ${T} K"

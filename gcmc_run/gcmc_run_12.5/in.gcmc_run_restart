@@ -1,0 +1,152 @@
+# ========================================================
+# LAMMPS Input Script for GCMC Simulation of CO2 Adsorption
+# in Cu_cav@C Core-Shell Structure with ReaxFF Force Field
+# ========================================================
+
+# ========== Initialization ==========
+units           real
+atom_style      full
+boundary        p p p
+neighbor        2.0 bin
+neigh_modify    delay 0 every 1 check yes 
+# ========== Read Structure ==========
+variable        restart_step equal 70000
+read_restart    restart.${restart_step}.lammps
+print           "Restart file loaded: restart.${restart_step}.lammps"
+
+
+# ========== Atom Type Definitions ==========
+# Type 1: Cu (from core)
+# Type 2: C  (from carbon shell)
+# Type 3: C  (from CO2 molecule)
+# Type 4: O  (from CO2 molecule)
+
+# Define CO2 molecule template
+molecule        co2mol CO2.mol  toff 1 # Create this file with CO2 coordinates
+# Set masses (g/mol)
+mass            1 63.546     # Cu
+mass            2 12.011     # C (shell)
+mass            3 12.011     # C (shell)
+mass            4 15.999     # O (CO2)
+
+
+# ========== ReaxFF Force Field Setup ==========
+# Load your ReaxFF force field file
+pair_style      reaxff NULL
+pair_coeff      * * jp046244d_si_002.reaxff Cu C C O  # Check your ffield file for element order
+
+# Charge equilibration (QEq) for ReaxFF
+fix             qeq all qeq/reaxff 1 0.0 10.0 1.0e-6 reaxff maxiter 10000
+
+# ========== Define Regions ==========
+# Region for GCMC insertion (gap between Cu core and carbon shell)
+variable        Cu_radius equal 25.0     # Angstrom (2.5 nm)
+variable        gap equal 82.2           # Angstrom (8.22 nm)
+variable        outer_radius equal ${Cu_radius}+${gap}
+variable        cu_core_outer equal ${Cu_radius}+2.0
+variable        center equal lx/2
+
+# Define spherical shell region for CO2 insertion
+region          Cu_core_outward sphere ${center} ${center} ${center} ${Cu_radius} side out
+region          Carbon_shell_inner sphere ${center} ${center} ${center} ${outer_radius} side in
+# Bigger intersect smaller sphere, leaving a ring
+region          gcmc_region intersect 2 Cu_core_outward Carbon_shell_inner
+
+# Region to constrain Cu core (optional, to prevent drift)
+region          cu_core sphere ${center} ${center} ${center} ${Cu_radius} side in
+group           cu_core_group region cu_core
+fix             constrain_cu cu_core_group setforce 0.0 0.0 0.0
+
+thermo          100
+thermo_style    custom step cpu cpuremain temp press density vol atoms etotal pe ke 
+thermo_modify   lost warn flush yes
+timestep        0.1 # 0.1 fs
+
+
+# ========== GCMC Setup for CO2 Adsorption ==========
+
+
+# GCMC parameters
+variable        T equal 298.0     # K
+variable        P equal 10.0          # bar
+variable        kT equal 0.001987*${T} # kcal/mol
+variable        mu0 equal -6.5         # μ at 1 bar, 298 K
+variable        mu  equal ${mu0}+${kT}*ln(${P})           # Chemical potential (kcal/mol) for CO2 at 298K, 1 bar
+
+print "GCMC parameters:"
+print "Temperature: ${T} K"
+print "Pressure: ${P} bar"
+print "Chemical potential: ${mu} kcal/mol"
+
+# Temperature control for all atoms except constrained Cu
+group           mobile_group subtract all cu_core_group
+group           CO2  type 3 4
+
+
+# Fix for GCMC insertion/deletion of CO2 molecules
+fix             gcmc_fix CO2 gcmc 100 10 10 0 12345 ${T} ${mu} 1.0 &
+                mol co2mol &
+                region gcmc_region &
+                maxangle 10.0 &
+                pressure ${P} &
+                group CO2 &
+                full_energy &
+                mcmoves 0.0 1.0 0.0  # Atom trans, Mol trans, Mol rotate
+
+# ========== Thermostat and Dynamics ==========
+fix             nvt mobile_group nvt temp ${T} ${T} 100.0
+
+# ========== Output Settings ==========
+# Thermodynamic output
+compute_modify  thermo_temp dynamic/dof yes
+thermo_style    custom step cpu cpuremain temp press density vol atoms etotal pe ke  &
+                f_gcmc_fix[1] f_gcmc_fix[2] f_gcmc_fix[3] f_gcmc_fix[4]
+thermo_modify   lost warn flush yes
+# f_gcmc_fix indices:
+# [1] = number of accepted insertions
+# [2] = number of accepted deletions
+# [3] = number of attempted insertions
+# [4] = number of attempted deletions
+
+# Trajectory output
+dump            traj all custom 500 trajectory.restart_35000.lammpstrj id type x y z q
+dump_modify     traj sort id append yes
+
+# Restart files
+restart         5000 restart.*.lammps
+
+# ========== Equilibration Phase ==========
+print "=== Equilibration phase (5 ps) ==="
+run             50000 upto  # 5 ps
+
+# ========== Production Run ==========
+print "=== Production GCMC/MD (50 ps) ==="
+# Each cycle: GCMC attempts + MD relaxation
+run             500000      # GCMC attempts
+
+
+# ========== Final Analysis and Output ==========
+print "=== Simulation Complete ==="
+
+# Calculate adsorption statistics
+variable        nCO2 equal "count(mobile,type,3)/3"
+variable        volume_nm3 equal "vol/1000.0"
+variable        adsorption_density equal "${nCO2}/${volume_nm3}"
+variable        adsorption_mmol_g equal "${adsorption_density}*1.66054"
+
+# Acceptance rates
+variable        trans_attempts equal f_gcmc_fix[1]
+variable        trans_accepted equal f_gcmc_fix[2]
+variable        ins_attempts equal f_gcmc_fix[3]
+variable        ins_accepted equal f_gcmc_fix[4]
+variable        trans_rate equal ${trans_accepted}/${trans_attempts}
+variable        ins_rate equal ${ins_accepted}/${ins_attempts}
+
+print "========================================"
+print "FINAL RESULTS - CO2 Adsorption at ${P} bar, ${T} K"
+print "========================================"
+print "System volume: ${vol} Å³ (${volume_nm3} nm³)"
+print "Total CO2 molecules: ${nCO2}"
+print "Adsorption density: ${adsorption_density} molecules/nm³"
+print "Adsorption capacity: ${adsorption_mmol_g} mmol/g"
+print ""

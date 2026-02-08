@@ -1,0 +1,11 @@
+GCMC_INSERTION_REGION
+region_type = block
+xlo = INF
+xhi = INF
+ylo = INF
+yhi = INF
+zlo = 41.43560611560248
+zhi = 121.63560611560249
+
+# Volume = 359413.7 Å³
+# Height = 80.2 Å

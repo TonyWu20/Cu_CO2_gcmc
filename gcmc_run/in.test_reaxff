@@ -1,0 +1,26 @@
+# Test Cu-CO2 interaction energy
+units           real
+atom_style      full
+
+# Create single Cu atom and CO2 molecule
+region          box block -20 20 -20 20 -20 20
+create_box      4 box
+create_atoms    1 single 0 0 0
+create_atoms    2 single 0 0 3.0
+create_atoms    3 single 0 1.16 3.0
+create_atoms    4 single 0 -1.16 3.0
+
+mass            1 63.546
+mass            2 12.011
+mass            3 15.999
+mass            4 15.999
+
+pair_style      reaxff NULL
+pair_coeff      * * jp046244d_si_002.reaxff Cu C O O
+fix             qeq all qeq/reaxff 1 0.0 10.0 1.0e-6 reaxff maxiter 30000
+
+# Compute interaction energy
+compute         pe all pe
+variable        interaction_energy equal c_pe
+run             0
+print "Cu-CO2 interaction energy: ${interaction_energy} kcal/mol"

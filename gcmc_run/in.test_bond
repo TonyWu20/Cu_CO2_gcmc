@@ -1,0 +1,38 @@
+# Simple test to check for bonds
+units           real
+atom_style      full
+
+# Create Cu cluster (4 atoms) and CO2
+region          box block -10 10 -10 10 -10 10
+create_box      4 box bond/types 1 angle/types 1 extra/bond/per/atom 6
+create_atoms    1 single 0 0 0
+create_atoms    1 single 1.5 0 0
+create_atoms    1 single 0 1.5 0
+create_atoms    1 single 0 0 1.5
+create_atoms    2 single 0 0 3.0
+create_atoms    3 single 0 1.16 3.0
+create_atoms    4 single 0 -1.16 3.0
+
+# Create CO2 bonds
+bond_style      harmonic
+bond_coeff      1 1000.0 1.16  # C-O bond in CO2
+create_bonds    single/bond 1 5 6  # C-O
+create_bonds    single/bond 1 5 7  # C-O
+
+mass            1 63.546
+mass            2 12.011
+mass            3 15.999
+mass            4 15.999
+
+pair_style      reaxff NULL
+pair_coeff      * * jp046244d_si_002.reaxff Cu C O O
+fix             qeq all qeq/reaxff 1 0.0 10.0 1.0e-6 reaxff maxiter 30000
+fix 1 all reaxff/bonds 10 bonds.reaxff
+
+# Run short MD and monitor bonds
+compute         bonds all property/atom nbonds
+dump            bondcheck all custom 10 bond_test.xyz id type x y z c_bonds
+run             100
+
+# Check for new bonds (Cu-O or Cu-C)
+print "If new bonds appear between Cu (type 1) and C/O (types 2-4), chemisorption is occurring"

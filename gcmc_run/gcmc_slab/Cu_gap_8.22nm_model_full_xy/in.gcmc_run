@@ -83,13 +83,6 @@ fix             fix_cu_bottom cu_bottom setforce 0.0 0.0 0.0
 
 # ========== Minimization ==========
 timestep        0.1
-thermo          100
-thermo_modify   lost warn flush yes
-thermo_style    custom step cpu cpuremain temp press density vol atoms etotal pe ke 
-min_style       cg
-minimize        1.0e-6 1.0e-8 10000 10000
-reset_timestep  0
-
 
 # ========== Thermostat ==========
 variable        T equal 298.0
@@ -99,18 +92,10 @@ variable        mu equal -416.71462715 + 0.001987*${T}*ln(${P})
 
 compute mdtemp all temp
 compute_modify mdtemp dynamic/dof yes
-fix             nvt all nvt temp ${T} ${T} 100.0
-fix_modify      nvt temp mdtemp
-dump            traj all custom 100 slab_nvt.lammpstrj id type x y z q
-dump_modify     traj sort id
-run 10000
-
-undump          traj
 
 unfix           fix_cu_bottom
 group           adsorbent type 1 2
 fix             fix_adsorbent adsorbent setforce 0.0 0.0 0.0
-unfix nvt
 uncompute mdtemp
 group           CO2 type 3 4
 compute mdtemp CO2 temp
@@ -118,6 +103,9 @@ compute_modify mdtemp dynamic/dof yes
 
 fix             nvt CO2 nvt temp ${T} ${T} 100.0
 fix_modify      nvt temp mdtemp
+
+fix             rigid_co2 CO2 rigid/small molecule mol co2mol
+fix_modify      rigid_co2 dynamic/dof yes
 
 # ========== GCMC Setup ==========
 # Gap region (between Cu and graphene)
@@ -129,9 +117,9 @@ region          gcmc_region block 0 80.0 0 80.0 ${gap_z_bot} ${gcmc_top}
 
 
 # Enhanced GCMC for gap region
-fix             gcmc_fix CO2 gcmc 100 100 100 0 12345 ${T} ${mu} 1.0 &
+fix             gcmc_fix CO2 gcmc 100 100 0 0 12345 ${T} ${mu} 1.0 &
                 mol co2mol &
-                region gap_region &
+                rigid rigid_co2 &
                 overlap_cutoff 1.2 &
                 pressure ${P} &
                 maxangle 25 &
@@ -175,7 +163,7 @@ thermo_style    custom step cpu cpuremain temp press vol v_nCO2_gap v_nCO2_cu v_
                 v_rot_attempts v_rot_successes 
 
 fix             monitor all ave/time 500 10 5000 v_nCO2_gap v_nCO2_cu v_gap_dens file adsorption.dat
-
+restart         5000   restart.*.lammps
 
 # ========== Run ==========
 

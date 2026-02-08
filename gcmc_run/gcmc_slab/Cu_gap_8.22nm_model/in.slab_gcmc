@@ -1,0 +1,131 @@
+# ========================================================
+# LAMMPS Input Script for CO2 Adsorption in Cu-Graphene Slab
+# Gap: 8.22 nm (82.2 Å)
+# ========================================================
+
+# ========== Initialization ==========
+units           real
+atom_style      full
+boundary        p p f
+neighbor        2.0 bin
+neigh_modify    delay 0 every 1 check yes
+
+# ========== Read Structure ==========
+read_data       Cu_slab_gap_8.22nm.lammps
+
+# ========== Atom Type Definitions ==========
+# Type 1: Cu (slab)
+# Type 2: C  (graphene)
+# Type 3: C  (CO2 molecule)
+# Type 4: O  (CO2 molecule)
+
+# Define CO2 molecule template
+molecule        co2mol CO2.mol
+
+# Set masses
+mass            1 63.546     # Cu
+mass            2 12.011     # C (graphene)
+mass            3 12.011     # C (CO2)
+mass            4 15.999     # O (CO2)
+
+# ========== Force Field ==========
+# Hybrid force field: ReaxFF for framework, LJ for Cu-CO2
+pair_style      hybrid/overlay reaxff NULL lj/cut 12.0 coul/long 12.0
+pair_modify     mix arithmetic
+
+# ReaxFF for framework (adjust path to your ReaxFF file)
+pair_coeff      * * reaxff ffield.reaxff Cu C NULL NULL
+fix             qeq all qeq/reaxff 1 0.0 10.0 1.0e-6 reaxff maxiter 80000
+
+# LJ for Cu-CO2 (physisorption parameters)
+pair_coeff      1 3 lj/cut 0.042 3.15  # Cu-C(CO2)
+pair_coeff      1 4 lj/cut 0.031 3.28  # Cu-O(CO2)
+
+# LJ for CO2-CO2 (TraPPE)
+pair_coeff      3 3 lj/cut 0.0559 3.74   # C(CO2)-C(CO2)
+pair_coeff      4 4 lj/cut 0.159 3.05    # O(CO2)-O(CO2)
+pair_coeff      3 4 lj/cut 0.094 3.395   # C(CO2)-O(CO2)
+
+# Electrostatics for CO2
+kspace_style    pppm 1.0e-4
+
+# ========== Constraints ==========
+# Fix bottom Cu layers to prevent drift
+region          cu_bottom block INF INF INF INF 0.0 10.845
+group           cu_fixed region cu_bottom
+fix             fix_cu cu_fixed setforce 0.0 0.0 0.0
+
+# ========== GCMC Setup ==========
+# Gap region between Cu and graphene
+region          gcmc_region block INF INF INF INF 41.43560611560248 121.63560611560249
+
+# GCMC parameters
+variable        T equal 298.0          # K
+variable        P equal 10.0           # bar
+variable        mu equal -416.71462715+ 0.001987*${T}*ln(${P})  # Chemical potential
+
+# Group for CO2 molecules
+group           CO2 type 3 4
+
+# GCMC fix - enhanced insertion attempts in gap
+fix             gcmc_fix CO2 gcmc 200 1000 1000 0 12345 ${T} ${mu} 2.0 &
+                mol co2mol &
+                region gcmc_region &
+                pressure ${P} &
+                group CO2 &
+                full_energy
+
+# ========== Thermostat ==========
+group           mobile subtract all cu_fixed
+fix             nvt mobile nvt temp ${T} ${T} 100.0
+
+# ========== Monitoring ==========
+# Monitor CO2 in gap
+compute         co2_in_gap all count/region gcmc_region type 3
+variable        nCO2_gap equal c_co2_in_gap/3  # Each CO2 has 3 atoms
+
+# Monitor CO2 near Cu surface (within 3.5 Å)
+region          cu_surface_region block INF INF INF INF 41.43560611560248 44.93560611560248
+compute         co2_near_cu all count/region cu_surface_region type 3
+variable        nCO2_cu equal c_co2_near_cu/3
+
+# Output monitoring
+thermo          1000
+thermo_style    custom step temp press density atoms v_nCO2_gap v_nCO2_cu
+
+# File output for adsorption monitoring
+fix             monitor all ave/time 500 10 5000 v_nCO2_gap v_nCO2_cu file adsorption.dat
+
+# Trajectory output
+dump            traj all custom 10000 traj.lammpstrj id type x y z
+dump_modify     traj sort id
+
+# ========== Run Protocol ==========
+# Initial minimization
+min_style       cg
+minimize        1.0e-4 1.0e-6 1000 10000
+reset_timestep  0
+
+print "=== Equilibration (2 ps) ==="
+run             20000  # 2 ps
+
+print "=== Production GCMC (5 ps) ==="
+run             50000  # 5 ps
+
+# ========== Final Analysis ==========
+variable        gap_volume equal (121.63560611560249 - 41.43560611560248) * lx * ly
+variable        gap_density equal v_nCO2_gap * 1660.54 / v_gap_volume  # mmol/cm³
+
+print "========================================"
+print "SIMULATION COMPLETE"
+print "========================================"
+print "System specifications:"
+print "  Gap size: 8.22 nm (82.2 Å)"
+print "  Cell: 71.6 × 62.6 × 159.3 Å"
+print "  Pore diameter: 12.5 Å"
+print "  Carbon layers: 3"
+print "Results:"
+print "  CO2 in gap: ${nCO2_gap} molecules"
+print "  CO2 near Cu: ${nCO2_cu} molecules"
+print "  Gap density: ${gap_density} mmol/cm³"
+print "========================================"

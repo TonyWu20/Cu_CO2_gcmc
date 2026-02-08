@@ -1,0 +1,64 @@
+units metal
+atom_style molecular
+boundary p p p
+
+read_data ./C_shell_porous_Cu_core_CO2_d2_rlx_MD
+
+mass 1 12.01
+mass 2 63.55
+mass 3 15.99
+
+pair_style      reaxff NULL checkqeq no
+pair_coeff      * * jp046244d_si_002.reaxff C Cu O
+
+fix charge all property/atom q 
+
+#kspace_style   pppm 1.0e-4
+#kspace_modify gewald 1.0e-4
+
+bond_style harmonic
+bond_coeff 1 350.0 1.42
+neighbor 0.3 bin
+neigh_modify delay 5
+
+thermo          100
+thermo_style    custom step cpu cpuremain temp press vol etotal pe ke
+
+print           "Starting energy minimization..."
+min_style       cg
+minimize        1.0e-4 1.0e-6 1000 10000
+
+# Equilibration in NVT ensemble
+print           "Starting NVT equilibration..."
+velocity        all create 300.0 12345 rot yes dist gaussian
+fix             1 all nvt temp 300.0 300.0 0.1
+timestep        0.0001
+run             10000
+unfix           1
+
+# NPT ensemble at 1.0 MPa (10 atm, since 1 atm = 0.101325 MPa, 1.0 MPa ≈ 9.87 atm)
+print           "Starting NPT production run at 1.0 MPa..."
+fix             2 all npt temp 300.0 300.0 0.1 iso 9.87 9.87 1.0
+variable        step equal step
+variable        press equal press
+variable        vol equal vol
+variable        etotal equal etotal
+fix             3 all ave/time 10 1 10 v_press v_vol v_etotal file pressure_volume.dat
+
+# Dump configuration files
+dump            1 all atom 500 trajectory.lammpstrj
+dump_modify     1 sort id
+
+# Run NPT simulation
+run             500000
+
+# Final minimization before output
+print           "Final minimization..."
+unfix           2
+minimize        1.0e-4 1.0e-6 1000 10000
+
+# Write final configuration
+write_data      final_configuration.data
+
+print           "Simulation completed successfully"
+
